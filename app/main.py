@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field, IPvAnyAddress
 
@@ -61,6 +63,7 @@ def login(login_data: LoginRequest):
         "role": user["role"],
         "message": "登录成功",
     }
+DeviceStatus = Literal["在线", "离线", "故障"]
 class DeviceCreate(BaseModel):
     name: str = Field(
         min_length=1,
@@ -79,6 +82,8 @@ class DeviceCreate(BaseModel):
         max_length=30,
         description="设备类型",
     )
+class DeviceStatusUpdate(BaseModel):
+    status: DeviceStatus
 
 @app.post(
     "/api/devices",
@@ -113,12 +118,35 @@ def create_device(device: DeviceCreate):
 
 
 @app.get("/api/devices")
-def list_devices():
+def list_devices(device_status: DeviceStatus | None = None):
+    if device_status is None:
+        filtered_devices = DEVICES
+    else:
+        filtered_devices = [
+            device
+            for device in DEVICES
+            if device["status"] == device_status
+        ]
+
     return {
-        "total": len(DEVICES),
-        "items": DEVICES,
+        "total": len(filtered_devices),
+        "items": filtered_devices,
     }
 
+@app.patch("/api/devices/{device_id}/status")
+def update_device_status(
+    device_id: int,
+    status_update: DeviceStatusUpdate,
+):
+    for device in DEVICES:
+        if device["id"] == device_id:
+            device["status"] = status_update.status
+            return device
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="设备不存在",
+    )
 
 @app.get("/api/devices/{device_id}")
 def get_device(device_id: int):
