@@ -202,3 +202,113 @@ def test_use_default_device_type():
 
     assert response.status_code == 201
     assert response.json()["device_type"] == "网络摄像机"
+
+@pytest.mark.parametrize(
+    "new_status",
+    [
+        "在线",
+        "离线",
+        "故障",
+    ],
+)
+def test_update_device_status(new_status):
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{device_id}/status",
+        json={"status": new_status},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == new_status
+
+
+def test_reject_invalid_device_status():
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{device_id}/status",
+        json={"status": "未知"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_missing_device_status():
+    response = client.patch(
+        "/api/devices/999/status",
+        json={"status": "在线"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "设备不存在"
+
+
+def test_filter_devices_by_status():
+    first_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    second_response = client.post(
+        "/api/devices",
+        json=valid_device(
+            name="实验室摄像机02",
+            ip_address="192.168.1.102",
+            port=8001,
+        ),
+    )
+
+    first_device_id = first_response.json()["id"]
+    second_device_id = second_response.json()["id"]
+
+    client.patch(
+        f"/api/devices/{first_device_id}/status",
+        json={"status": "在线"},
+    )
+    client.patch(
+        f"/api/devices/{second_device_id}/status",
+        json={"status": "故障"},
+    )
+
+    response = client.get(
+        "/api/devices",
+        params={"device_status": "在线"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == first_device_id
+    assert response.json()["items"][0]["status"] == "在线"
+
+
+def test_filter_devices_without_matching_result():
+    client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+
+    response = client.get(
+        "/api/devices",
+        params={"device_status": "故障"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+    assert response.json()["items"] == []
+
+
+def test_reject_invalid_status_filter():
+    response = client.get(
+        "/api/devices",
+        params={"device_status": "未知"},
+    )
+
+    assert response.status_code == 422
