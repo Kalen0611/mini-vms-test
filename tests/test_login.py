@@ -51,3 +51,30 @@ def test_login_with_empty_username():
     )
 
     assert response.status_code == 422
+
+def test_login_with_unknown_username():
+    response = client.post(
+        "/api/login",
+        json={"username": "unknown", "password": "admin123"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "用户名或密码错误"
+
+
+def test_login_with_empty_password():
+    response = client.post(
+        "/api/login",
+        json={"username": "admin", "password": ""},
+    )
+
+    assert response.status_code == 422
+
+
+def test_login_without_password_field():
+    response = client.post(
+        "/api/login",
+        json={"username": "admin"},
+    )
+
+    assert response.status_code == 422
