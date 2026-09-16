@@ -1,13 +1,13 @@
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, IPvAnyAddress
 
 
 app = FastAPI(
     title="MiniVMS API",
     description="智能视频设备管理与告警平台测试项目",
-    version="0.1.1",
+    version="0.1.3",
 )
 
 
@@ -32,12 +32,20 @@ USERS = {
 }
 DEVICES: list[dict] = []
 
+def require_admin(x_user_role: str = Header(...)):
+    if x_user_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可以执行此操作",
+        )
+
+    return x_user_role
 
 @app.get("/")
 def read_root():
     return {
         "application": "MiniVMS",
-        "version": "0.1.1",
+        "version": "0.1.3",
         "status": "running",
     }
 
@@ -84,6 +92,24 @@ class DeviceCreate(BaseModel):
     )
 class DeviceStatusUpdate(BaseModel):
     status: DeviceStatus
+
+class DeviceUpdate(BaseModel):
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+    )
+    ip_address: IPvAnyAddress | None = None
+    port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+    )
+    device_type: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=30,
+    )
 
 @app.post(
     "/api/devices",
@@ -142,6 +168,84 @@ def update_device_status(
         if device["id"] == device_id:
             device["status"] = status_update.status
             return device
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="设备不存在",
+    )
+
+@app.patch("/api/devices/{device_id}")
+def update_device(
+    device_id: int,
+    update_data: DeviceUpdate,
+    admin_role: str = Depends(require_admin),
+):
+    device = next(
+        (
+            current_device
+            for current_device in DEVICES
+            if current_device["id"] == device_id
+        ),
+        None,
+    )
+
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="设备不存在",
+        )
+
+    updates = update_data.model_dump(
+        mode="json",
+        exclude_unset=True,
+        exclude_none=True,
+    )
+
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="至少提供一个需要修改的字段",
+        )
+
+    new_ip_address = updates.get(
+        "ip_address",
+        device["ip_address"],
+    )
+    new_port = updates.get(
+        "port",
+        device["port"],
+    )
+
+    duplicate_device = any(
+        other_device["id"] != device_id
+        and other_device["ip_address"] == new_ip_address
+        and other_device["port"] == new_port
+        for other_device in DEVICES
+    )
+
+    if duplicate_device:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="相同IP地址和端口的设备已存在",
+        )
+
+    device.update(updates)
+    return device
+
+@app.delete("/api/devices/{device_id}")
+def delete_device(
+    device_id: int,
+    admin_role: str = Depends(require_admin),
+):
+    for index, device in enumerate(DEVICES):
+        if device["id"] == device_id:
+            deleted_device = DEVICES.pop(index)
+
+            return {
+                "success": True,
+                "message": "设备删除成功",
+                "device": deleted_device,
+            }
 
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
