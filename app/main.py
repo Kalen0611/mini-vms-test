@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, IPvAnyAddress
 app = FastAPI(
     title="MiniVMS API",
     description="智能视频设备管理与告警平台测试项目",
-    version="0.1.0",
+    version="0.1.1",
 )
 
 
@@ -35,7 +35,7 @@ DEVICES: list[dict] = []
 def read_root():
     return {
         "application": "MiniVMS",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "status": "running",
     }
 
@@ -68,6 +68,11 @@ class DeviceCreate(BaseModel):
         description="设备名称",
     )
     ip_address: IPvAnyAddress
+    port: int = Field(
+        ge=1,
+        le=65535,
+        description="设备端口",
+    )
     device_type: str = Field(
         default="网络摄像机",
         min_length=1,
@@ -83,23 +88,25 @@ def create_device(device: DeviceCreate):
     device_data = device.model_dump(mode="json")
 
     duplicate_device = any(
-        existing_device["ip_address"] == device_data["ip_address"]
-        for existing_device in DEVICES
-    )
+    existing_device["ip_address"] == device_data["ip_address"]
+    and existing_device["port"] == device_data["port"]
+    for existing_device in DEVICES
+)
 
     if duplicate_device:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="设备IP地址已存在",
+            detail="相同IP地址和端口的设备已存在",
         )
 
     new_device = {
-        "id": len(DEVICES) + 1,
-        "name": device_data["name"],
-        "ip_address": device_data["ip_address"],
-        "device_type": device_data["device_type"],
-        "status": "离线",
-    }
+    "id": len(DEVICES) + 1,
+    "name": device_data["name"],
+    "ip_address": device_data["ip_address"],
+    "port": device_data["port"],
+    "device_type": device_data["device_type"],
+    "status": "离线",
+}
 
     DEVICES.append(new_device)
     return new_device
