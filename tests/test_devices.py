@@ -1,7 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import DEVICES, app
+from app.database import clear_device_records
+from app.main import app
 
 
 client = TestClient(app)
@@ -10,9 +11,9 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def clear_device_store():
     """每条测试执行前后清空设备数据。"""
-    DEVICES.clear()
+    clear_device_records()
     yield
-    DEVICES.clear()
+    clear_device_records()
 
 
 def valid_device(

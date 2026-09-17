@@ -2,12 +2,23 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, IPvAnyAddress
+from app.database import (
+    DuplicateDeviceError,
+    create_device_record,
+    delete_device_record,
+    get_device_record,
+    init_database,
+    list_device_records,
+    update_device_record,
+    update_device_status_record,
+)
 
+init_database()
 
 app = FastAPI(
     title="MiniVMS API",
     description="智能视频设备管理与告警平台测试项目",
-    version="0.1.3",
+    version="0.2.0",
 )
 
 
@@ -30,7 +41,7 @@ USERS = {
         "role": "访客",
     },
 }
-DEVICES: list[dict] = []
+
 
 def require_admin(x_user_role: str = Header(...)):
     if x_user_role != "admin":
@@ -45,7 +56,7 @@ def require_admin(x_user_role: str = Header(...)):
 def read_root():
     return {
         "application": "MiniVMS",
-        "version": "0.1.3",
+        "version": "0.2.0",
         "status": "running",
     }
 
@@ -118,61 +129,43 @@ class DeviceUpdate(BaseModel):
 def create_device(device: DeviceCreate):
     device_data = device.model_dump(mode="json")
 
-    duplicate_device = any(
-    existing_device["ip_address"] == device_data["ip_address"]
-    and existing_device["port"] == device_data["port"]
-    for existing_device in DEVICES
-)
-
-    if duplicate_device:
+    try:
+        return create_device_record(device_data)
+    except DuplicateDeviceError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="相同IP地址和端口的设备已存在",
         )
 
-    new_device = {
-    "id": len(DEVICES) + 1,
-    "name": device_data["name"],
-    "ip_address": device_data["ip_address"],
-    "port": device_data["port"],
-    "device_type": device_data["device_type"],
-    "status": "离线",
-}
-
-    DEVICES.append(new_device)
-    return new_device
-
 
 @app.get("/api/devices")
 def list_devices(device_status: DeviceStatus | None = None):
-    if device_status is None:
-        filtered_devices = DEVICES
-    else:
-        filtered_devices = [
-            device
-            for device in DEVICES
-            if device["status"] == device_status
-        ]
+    devices = list_device_records(device_status)
 
     return {
-        "total": len(filtered_devices),
-        "items": filtered_devices,
+        "total": len(devices),
+        "items": devices,
     }
+
 
 @app.patch("/api/devices/{device_id}/status")
 def update_device_status(
     device_id: int,
     status_update: DeviceStatusUpdate,
 ):
-    for device in DEVICES:
-        if device["id"] == device_id:
-            device["status"] = status_update.status
-            return device
-
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="设备不存在",
+    device = update_device_status_record(
+        device_id,
+        status_update.status,
     )
+
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="设备不存在",
+        )
+
+    return device
+
 
 @app.patch("/api/devices/{device_id}")
 def update_device(
@@ -180,16 +173,7 @@ def update_device(
     update_data: DeviceUpdate,
     admin_role: str = Depends(require_admin),
 ):
-    device = next(
-        (
-            current_device
-            for current_device in DEVICES
-            if current_device["id"] == device_id
-        ),
-        None,
-    )
-
-    if device is None:
+    if get_device_record(device_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="设备不存在",
@@ -207,58 +191,43 @@ def update_device(
             detail="至少提供一个需要修改的字段",
         )
 
-    new_ip_address = updates.get(
-        "ip_address",
-        device["ip_address"],
-    )
-    new_port = updates.get(
-        "port",
-        device["port"],
-    )
-
-    duplicate_device = any(
-        other_device["id"] != device_id
-        and other_device["ip_address"] == new_ip_address
-        and other_device["port"] == new_port
-        for other_device in DEVICES
-    )
-
-    if duplicate_device:
+    try:
+        return update_device_record(device_id, updates)
+    except DuplicateDeviceError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="相同IP地址和端口的设备已存在",
         )
 
-    device.update(updates)
-    return device
 
 @app.delete("/api/devices/{device_id}")
 def delete_device(
     device_id: int,
     admin_role: str = Depends(require_admin),
 ):
-    for index, device in enumerate(DEVICES):
-        if device["id"] == device_id:
-            deleted_device = DEVICES.pop(index)
+    deleted_device = delete_device_record(device_id)
 
-            return {
-                "success": True,
-                "message": "设备删除成功",
-                "device": deleted_device,
-            }
+    if deleted_device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="设备不存在",
+        )
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="设备不存在",
-    )
+    return {
+        "success": True,
+        "message": "设备删除成功",
+        "device": deleted_device,
+    }
+
 
 @app.get("/api/devices/{device_id}")
 def get_device(device_id: int):
-    for device in DEVICES:
-        if device["id"] == device_id:
-            return device
+    device = get_device_record(device_id)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="设备不存在",
-    )
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="设备不存在",
+        )
+
+    return device
