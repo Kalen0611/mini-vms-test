@@ -312,3 +312,205 @@ def test_reject_invalid_status_filter():
     )
 
     assert response.status_code == 422
+
+def test_admin_can_update_device():
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{device_id}",
+        headers={"X-User-Role": "admin"},
+        json={"name": "修改后的摄像机"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "修改后的摄像机"
+
+    # 只修改名称，其他字段应该保持不变
+    assert response.json()["ip_address"] == "192.168.1.101"
+    assert response.json()["port"] == 8000
+    assert response.json()["status"] == "离线"
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "operator",
+        "visitor",
+    ],
+)
+def test_non_admin_cannot_update_device(role):
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{device_id}",
+        headers={"X-User-Role": role},
+        json={"name": "无权限修改"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "仅管理员可以执行此操作"
+
+
+def test_update_device_without_role_header():
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{device_id}",
+        json={"name": "缺少请求头"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_reject_empty_device_update():
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{device_id}",
+        headers={"X-User-Role": "admin"},
+        json={},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "至少提供一个需要修改的字段"
+
+
+def test_reject_duplicate_address_when_updating():
+    client.post(
+        "/api/devices",
+        json=valid_device(
+            name="摄像机01",
+            ip_address="192.168.1.101",
+            port=8000,
+        ),
+    )
+    second_response = client.post(
+        "/api/devices",
+        json=valid_device(
+            name="摄像机02",
+            ip_address="192.168.1.102",
+            port=8001,
+        ),
+    )
+    second_device_id = second_response.json()["id"]
+
+    response = client.patch(
+        f"/api/devices/{second_device_id}",
+        headers={"X-User-Role": "admin"},
+        json={
+            "ip_address": "192.168.1.101",
+            "port": 8000,
+        },
+    )
+
+    assert response.status_code == 409
+    assert (
+        response.json()["detail"]
+        == "相同IP地址和端口的设备已存在"
+    )
+
+
+def test_update_missing_device():
+    response = client.patch(
+        "/api/devices/999",
+        headers={"X-User-Role": "admin"},
+        json={"name": "不存在的设备"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "设备不存在"
+
+
+def test_admin_can_delete_device():
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    delete_response = client.delete(
+        f"/api/devices/{device_id}",
+        headers={"X-User-Role": "admin"},
+    )
+
+    assert delete_response.status_code == 200
+    assert delete_response.json()["success"] is True
+    assert delete_response.json()["message"] == "设备删除成功"
+
+    get_response = client.get(f"/api/devices/{device_id}")
+
+    assert get_response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "operator",
+        "visitor",
+    ],
+)
+def test_non_admin_cannot_delete_device(role):
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    delete_response = client.delete(
+        f"/api/devices/{device_id}",
+        headers={"X-User-Role": role},
+    )
+
+    assert delete_response.status_code == 403
+    assert (
+        delete_response.json()["detail"]
+        == "仅管理员可以执行此操作"
+    )
+
+    # 权限被拒绝后，设备应继续存在
+    get_response = client.get(f"/api/devices/{device_id}")
+    assert get_response.status_code == 200
+
+
+def test_delete_device_without_role_header():
+    create_response = client.post(
+        "/api/devices",
+        json=valid_device(),
+    )
+    device_id = create_response.json()["id"]
+
+    response = client.delete(
+        f"/api/devices/{device_id}",
+    )
+
+    assert response.status_code == 422
+
+    # 缺少权限请求头时，设备不能被删除
+    get_response = client.get(f"/api/devices/{device_id}")
+    assert get_response.status_code == 200
+
+
+def test_delete_missing_device():
+    response = client.delete(
+        "/api/devices/999",
+        headers={"X-User-Role": "admin"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "设备不存在"
